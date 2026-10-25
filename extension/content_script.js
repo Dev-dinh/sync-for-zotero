@@ -911,6 +911,13 @@ globalThis.__syncZoteroWebchatDebug = {
 // ---------------------------------------------------------------------------
 
 const SITE_ADAPTERS = {
+  "notebooklm.google.com": globalThis.SyncZoteroNotebookLM?.createAdapter({
+    document, isVisibleElement, htmlToMarkdown, shared,
+  }),
+  "notebook.google.com": globalThis.SyncZoteroNotebookLM?.createAdapter({
+    document, isVisibleElement, htmlToMarkdown, shared,
+  }),
+
   "gemini.google.com": globalThis.SyncZoteroGemini?.createAdapter({
     document, isVisibleElement, htmlToMarkdown, shared,
   }),
@@ -2498,9 +2505,9 @@ async function submitMessageAndVerify(
   isPipelineCurrent = () => true,
   beforeSubmit = () => {},
 ) {
-  if (SITE_ADAPTER?.siteId === "gemini") {
+  if (SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm") {
     const sendBtn = await waitForSendButtonEnabled(30000);
-    if (!sendBtn) throw new Error("Gemini Send control is not enabled.");
+    if (!sendBtn) throw new Error(`${SITE_ADAPTER?.siteId === "notebooklm" ? "NotebookLM" : "Gemini"} Send control is not enabled.`);
     const baselineTranscriptCount = extractConversationTranscript().count;
     const baselineUserMessageCount = getUserMessageCount();
     const baselineOutboundRequestSerial = outboundRequestSerial;
@@ -2509,7 +2516,7 @@ async function submitMessageAndVerify(
     sendBtn.click();
     const delivered = await waitForSubmissionSignal(promptText, baselineOutboundRequestSerial, baselineUserMessageCount, baselineTranscriptCount);
     assertPipelineCurrent(isPipelineCurrent);
-    if (!delivered.delivered) throw new Error("Gemini prompt delivery could not be verified; inspect the conversation before retrying.");
+    if (!delivered.delivered) throw new Error(`${SITE_ADAPTER?.siteId === "notebooklm" ? "NotebookLM" : "Gemini"} prompt delivery could not be verified; inspect the conversation before retrying.`);
     return { baselineOutboundRequestSerial, clickAttempts: 1, requestObserved: false, streamObserved: false, requestContext: null };
   }
   if (SITE_ADAPTER?.siteId === "deepseek") {
@@ -2894,7 +2901,7 @@ requestDeepSeekNetworkCacheReplay();
  * worker timing with a page-timer fallback if worker startup or execution fails.
  */
 function workerSleep(ms) {
-  if (SITE_ADAPTER?.siteId === "gemini") return sleep(ms);
+  if (SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm" || SITE_ADAPTER?.forbidsBlobWorkers) return sleep(ms);
   return new Promise((resolve) => {
     let worker = null;
     let url = null;
@@ -3276,6 +3283,14 @@ async function streamResponseSnapshots(
   let pinnedGeminiChatUrl = SITE_ADAPTER?.siteId === "gemini"
     ? shared.normalizeGeminiConversationUrl(baseline.chatUrl) : null;
   const assertTrackedConversation = (transcript) => {
+    if (SITE_ADAPTER?.siteId === "notebooklm") {
+      const chatUrl = shared.normalizeNotebookLMConversationUrl(transcript.chatUrl);
+      if (pinnedGeminiChatUrl && chatUrl !== pinnedGeminiChatUrl) {
+        throw new Error("NotebookLM notebook changed while tracking the submitted turn.");
+      }
+      if (chatUrl) { pinnedGeminiChatUrl = chatUrl; remoteChatUrl = chatUrl; remoteChatId = SITE_ADAPTER.getChatIdFromUrl(chatUrl); }
+      return;
+    }
     if (SITE_ADAPTER?.siteId !== "gemini") return;
     const chatUrl = shared.normalizeGeminiConversationUrl(transcript.chatUrl);
     const isInitialHome = /^https:\/\/gemini\.google\.com\/app\/?(?:[?#]|$)/.test(transcript.chatUrl || "");
@@ -3722,7 +3737,7 @@ async function streamResponseSnapshots(
       nowMs - attachmentContractMismatchObservedAt >=
         SUBMITTED_ATTACHMENT_CONTRACT_TIMEOUT_MS
     ) {
-      if (SITE_ADAPTER?.siteId === "gemini") {
+      if (SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm") {
         throw new Error("The submitted Gemini attachments did not match the requested PDF and image count.");
       }
       if (attachmentRequested) {
@@ -5970,7 +5985,7 @@ async function collectHealthStatus() {
     sendControlState: describeSubmitControl(sendBtn),
     uploadControlFound: Boolean(uploadControl),
     networkHookActive: !domCapture && (networkHookActive || hookResponded),
-    supportedTargets: ["chatgpt", "deepseek", "gemini"],
+    supportedTargets: ["chatgpt", "deepseek", "gemini", "notebooklm"],
     answerCapture: domCapture ? "dom" : "network",
     supportedDeliveryContracts: [...SUPPORTED_DELIVERY_CONTRACTS],
     lastRequestAt: lastRequestAt || null,
@@ -5983,7 +5998,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "PING") {
     sendResponse({
       pong: true,
-      supportedTargets: ["chatgpt", "deepseek", "gemini"],
+      supportedTargets: ["chatgpt", "deepseek", "gemini", "notebooklm"],
       answerCapture: SITE_ADAPTER?.answerCapture || "network",
       supportedDeliveryContracts: [...SUPPORTED_DELIVERY_CONTRACTS],
     });
@@ -6124,6 +6139,14 @@ function assertSubmissionConversation(message) {
   if (!SITE_ADAPTER) throw new Error("Unsupported WebChat site.");
   if (message.expectedChatUrl && !shared.conversationUrlsMatch(getCurrentChatUrl(), message.expectedChatUrl)) {
     throw new Error("The current conversation does not match the expected conversation binding.");
+  }
+  if (SITE_ADAPTER.siteId === "notebooklm") {
+    const url = new URL(window.location.href);
+    const valid = shared.normalizeNotebookLMConversationUrl(url.href);
+    if (!valid && url.pathname !== "/" && url.pathname !== "/trynow") throw new Error("Invalid NotebookLM notebook URL.");
+    if (message.forceNewChat && valid && extractConversationTranscript().count > 0) {
+      throw new Error("NotebookLM did not confirm a fresh empty notebook.");
+    }
   }
   if (SITE_ADAPTER.siteId === "gemini") {
     const url = new URL(window.location.href);
@@ -6289,14 +6312,14 @@ if (!window.__syncZoteroListenerRegistered) {
             await attachImages(msg.images);
             uploadDetected = true;
           } catch (imgErr) {
-            if (SITE_ADAPTER?.siteId === "gemini") throw imgErr;
+            if (SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm") throw imgErr;
             console.warn("[sync-zotero] Image attachment failed:", imgErr);
           }
         }
         // Mode switching disabled — users control thinking mode directly on chatgpt.com
         await typePromptAndVerify(msg.prompt, {
           requireEnabledSendControl:
-            SITE_ADAPTER?.siteId === "chatgpt" || SITE_ADAPTER?.siteId === "gemini",
+            SITE_ADAPTER?.siteId === "chatgpt" || SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm",
         });
         assertPipelineCurrent(isPipelineCurrent);
         composerTextMatched = true;
@@ -6734,7 +6757,7 @@ async function _doScrapeHistory(options = {}) {
 }
 
 function shouldAutoScrapeHistory() {
-  if (SITE_ADAPTER?.siteId === "gemini") return false;
+  if (SITE_ADAPTER?.siteId === "gemini" || SITE_ADAPTER?.siteId === "notebooklm") return false;
   if (SITE_ADAPTER?.siteId !== "deepseek") return true;
   return !getCurrentChatId();
 }

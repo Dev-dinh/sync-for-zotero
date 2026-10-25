@@ -179,6 +179,14 @@ const WEBCHAT_DEBUG = false;
 // ---------------------------------------------------------------------------
 
 const SITE_CONFIGS = {
+  notebooklm: {
+    siteId: "notebooklm", label: "NotebookLM",
+    homeUrl: "https://notebooklm.google.com/",
+    urlPattern: "https://notebooklm.google.com/*",
+    urlPrefix: "https://notebooklm.google.com",
+    conversationUrlPattern: /^https:\/\/notebooklm\.google\.com\/notebook\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?(?:[?#].*)?$/i,
+  },
+
   gemini: {
     siteId: "gemini", label: "Google Gemini",
     homeUrl: "https://gemini.google.com/app",
@@ -218,7 +226,7 @@ function getSiteConfigByUrl(url) {
     const parsed = new URL(url);
     if (parsed.username || parsed.password) return null;
     for (const config of Object.values(SITE_CONFIGS)) {
-      if (parsed.origin === config.urlPrefix) return config;
+      if (parsed.origin === config.urlPrefix || (config.siteId === "notebooklm" && parsed.origin === "https://notebook.google.com")) return config;
     }
   } catch (_) {}
   return null;
@@ -1093,7 +1101,7 @@ async function pollForCommand() {
 
       let scrapeResult = null;
       try {
-        const scrape = (scrapeSiteConfig.siteId === "chatgpt" || scrapeSiteConfig.siteId === "gemini")
+        const scrape = (scrapeSiteConfig.siteId === "chatgpt" || scrapeSiteConfig.siteId === "gemini" || scrapeSiteConfig.siteId === "notebooklm")
           ? scrapeChatGPTHistory
           : scrapeDeepSeekHistory;
         scrapeResult = await scrape(scrapeSiteConfig, historyStartedAt);
@@ -1920,7 +1928,7 @@ async function ensureContentScript(tabId, requiredDeliveryContractVersion) {
   const tab = await chrome.tabs.get(tabId);
   const siteConfig = getSiteConfigByUrl(tab.url);
   if (!siteConfig) throw new Error("Unsupported WebChat tab URL.");
-  const domCapture = siteConfig.siteId === "gemini";
+  const domCapture = siteConfig.siteId === "gemini" || siteConfig.siteId === "notebooklm";
   const pingContentScript = () =>
     new Promise((resolve) => {
       chrome.tabs.sendMessage(tabId, { type: "PING" }, (res) => {
@@ -1928,7 +1936,7 @@ async function ensureContentScript(tabId, requiredDeliveryContractVersion) {
       });
     });
   const hasRequiredContract = (health) =>
-    (!domCapture || (health?.answerCapture === "dom" && health?.supportedTargets?.includes("gemini"))) && shared.contentScriptMeetsDeliveryContractRequirement(
+    (!domCapture || (health?.answerCapture === "dom" && health?.supportedTargets?.includes(siteConfig.siteId))) && shared.contentScriptMeetsDeliveryContractRequirement(
       health,
       requiredDeliveryContractVersion,
     );
@@ -1936,10 +1944,13 @@ async function ensureContentScript(tabId, requiredDeliveryContractVersion) {
     if (domCapture) return;
     try {
       await chrome.scripting.executeScript({
-        target: { tabId },
-        files:  ["injected.js"],
-        world:  "MAIN",
-      });
+    target: { tabId },
+    files: siteConfig.siteId === "notebooklm"
+      ? ["webchat_shared.js", "notebooklm_adapter.js", "content_script.js"]
+      : (siteConfig.siteId === "gemini"
+          ? ["webchat_shared.js", "gemini_adapter.js", "content_script.js"]
+          : ["webchat_shared.js", "content_script.js"]),
+  });
     } catch (_) {}
   };
 
@@ -1967,7 +1978,7 @@ async function ensureContentScript(tabId, requiredDeliveryContractVersion) {
   // stale after an extension reload.
   await chrome.scripting.executeScript({
     target: { tabId },
-    files:  ["webchat_shared.js", "gemini_adapter.js", "content_script.js"],
+    files: siteConfig.siteId === "gemini" ? ["webchat_shared.js", "gemini_adapter.js", "content_script.js"] : (siteConfig.siteId === "notebooklm" ? ["webchat_shared.js", "notebooklm_adapter.js", "content_script.js"] : ["webchat_shared.js", "content_script.js"]),
   });
 
   // Poll briefly instead of always paying a fixed 1s delay after injection.

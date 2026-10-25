@@ -321,10 +321,13 @@
     const supportedDeliveryContracts = probeAlive
       ? capabilityProbe.supportedDeliveryContracts
       : health?.supportedDeliveryContracts;
-    const gemini = (health?.siteId || targetSiteId) === "gemini";
+    const site = health?.siteId || targetSiteId;
+    let normUrl = chatUrl || null;
+    if (site === "gemini") normUrl = normalizeGeminiConversationUrl(chatUrl) || chatUrl || null;
+    else if (site === "notebooklm") normUrl = normalizeNotebookLMConversationUrl(chatUrl) || chatUrl || null;
     return {
       chatTabAlive: Boolean(chatTabAlive),
-      chatUrl: (gemini ? normalizeGeminiConversationUrl(chatUrl) : chatUrl) || chatUrl || null,
+      chatUrl: normUrl,
       siteId: health?.siteId || targetSiteId || null,
       url: health?.url || chatUrl || null,
       contentScriptAlive: probeAlive || healthAlive,
@@ -916,6 +919,8 @@
       const parsed = new URL(raw);
       const geminiUrl = normalizeGeminiConversationUrl(raw);
       if (geminiUrl) return geminiUrl;
+      const nblmUrl = normalizeNotebookLMConversationUrl(raw);
+      if (nblmUrl) return nblmUrl;
       if (parsed.hostname.toLowerCase() === "chatgpt.com") {
         const match = parsed.pathname.match(/^\/c\/([^/?#]+)/);
         if (match) return `${parsed.origin}/c/${match[1]}`;
@@ -923,6 +928,15 @@
     } catch (_) {}
 
     return raw.replace(/\/+$/, "");
+  }
+
+  function normalizeNotebookLMConversationUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""));
+      if ((parsed.origin !== "https://notebooklm.google.com" && parsed.origin !== "https://notebook.google.com") || parsed.username || parsed.password) return null;
+      const match = parsed.pathname.match(/^\/notebook\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i);
+      return match ? `https://notebooklm.google.com/notebook/${match[1].toLowerCase()}` : null;
+    } catch (_) { return null; }
   }
 
   function normalizeGeminiConversationUrl(url) {
@@ -941,7 +955,21 @@
     const hasId = rawId !== undefined && rawId !== null;
     let chatUrl = null;
     let chatId = null;
-    if (target === "gemini") {
+    if (target === "notebooklm") {
+      if (hasUrl) {
+        chatUrl = typeof rawUrl === "string" ? normalizeNotebookLMConversationUrl(rawUrl) : null;
+        if (!chatUrl) throw new Error("Invalid expected NotebookLM conversation binding URL.");
+        chatId = chatUrl.split("/").pop();
+      }
+      if (hasId) {
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (typeof rawId !== "string" || !uuidRe.test(rawId) || (chatId && chatId.toLowerCase() !== rawId.toLowerCase())) {
+          throw new Error("Expected NotebookLM conversation binding ID does not match.");
+        }
+        chatId = rawId.toLowerCase();
+        chatUrl = `https://notebooklm.google.com/notebook/${chatId}`;
+      }
+    } else if (target === "gemini") {
       if (hasUrl) {
         chatUrl = typeof rawUrl === "string" ? normalizeGeminiConversationUrl(rawUrl) : null;
         if (!chatUrl) throw new Error("Invalid expected Gemini conversation binding URL.");
@@ -1570,6 +1598,7 @@
     isRetrySafeContentScriptMessage,
     normalizeComposerText,
     normalizeConversationUrl,
+    normalizeNotebookLMConversationUrl,
     normalizeGeminiConversationUrl,
     resolveExpectedConversationBinding,
     postPhaseAndWaitForAck,

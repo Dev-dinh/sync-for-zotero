@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Sync for Zotero",
-  "version": "0.0.18",
-  "description": "Bridge LLM for Zotero with ChatGPT, DeepSeek and Google Gemini web chats",
+  "version": "0.0.19",
+  "description": "Bridge LLM for Zotero with ChatGPT, DeepSeek, Google Gemini and NotebookLM web chats",
   "minimum_chrome_version": "102",
   "permissions": [
     "tabs",
@@ -15,6 +15,8 @@
     "https://chatgpt.com/*",
     "https://chat.deepseek.com/*",
     "https://gemini.google.com/*",
+    "https://notebooklm.google.com/*",
+    "https://notebook.google.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
@@ -29,8 +31,19 @@
       "run_at": "document_start"
     },
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.deepseek.com/*", "https://gemini.google.com/*"],
-      "js": ["webchat_shared.js", "gemini_adapter.js", "content_script.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.deepseek.com/*",
+        "https://gemini.google.com/*",
+        "https://notebooklm.google.com/*",
+        "https://notebook.google.com/*"
+      ],
+      "js": [
+        "webchat_shared.js",
+        "gemini_adapter.js",
+        "notebooklm_adapter.js",
+        "content_script.js"
+      ],
       "run_at": "document_idle"
     }
   ],
