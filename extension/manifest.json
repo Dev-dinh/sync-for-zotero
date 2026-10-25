@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Sync for Zotero",
-  "version": "0.0.19",
-  "description": "Bridge LLM for Zotero with ChatGPT, DeepSeek, Google Gemini and NotebookLM web chats",
+  "version": "0.0.20",
+  "description": "Super-Bridge connecting Zotero with ChatGPT, DeepSeek, Google Gemini and bidirectional NotebookLM sync (NZBridge)",
   "minimum_chrome_version": "102",
   "permissions": [
     "tabs",
     "storage",
     "activeTab",
     "scripting",
-    "alarms"
+    "alarms",
+    "debugger"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -45,11 +46,22 @@
         "content_script.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://notebooklm.google.com/*",
+        "https://notebook.google.com/*"
+      ],
+      "js": [
+        "nzbridge_content.js",
+        "noteExtractor.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Sync for Zotero"
+    "default_popup": "popup/popup.html",
+    "default_title": "Sync for Zotero (NZBridge Super-Bridge)"
   },
   "icons": {
     "16": "icons/icon16.png",
